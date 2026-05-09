@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>识流 AI 助手 · 简易后台</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f5f7fb;
+            color: #333;
+        }
+        header {
+            background: linear-gradient(120deg, #4e8cff, #7c5cff);
+            color: #fff;
+            padding: 16px 24px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+        }
+        header h1 {
+            margin: 0;
+            font-size: 20px;
+        }
+        header p {
+            margin: 4px 0 0;
+            font-size: 13px;
+            opacity: 0.9;
+        }
+        main {
+            max-width: 1100px;
+            margin: 24px auto;
+            padding: 0 16px 32px;
+        }
+        .card {
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(15,35,66,0.06);
+            padding: 16px 20px 18px;
+            margin-bottom: 18px;
+        }
+        .card h2 {
+            margin: 0 0 10px;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .card h2 span.small {
+            font-size: 12px;
+            color: #888;
+            font-weight: normal;
+        }
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 46px;
+            height: 24px;
+        }
+        .switch input {
+            display: none;
+        }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .3s;
+            border-radius: 24px;
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .3s;
+            border-radius: 50%;
+        }
+        input:checked + .slider {
+            background-color: #4e8cff;
+        }
+        input:checked + .slider:before {
+            transform: translateX(22px);
+        }
+        .form-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 8px;
+            margin-bottom: 4px;
+        }
+        .form-group {
+            flex: 1;
+            min-width: 180px;
+            display: flex;
+            flex-direction: column;
+        }
+        label {
+            font-size: 13px;
+            color: #666;
+            margin-bottom: 4px;
+        }
+        input[type="text"], select, textarea {
+            padding: 6px 8px;
+            border-radius: 6px;
+            border: 1px solid #d0d7e2;
+            font-size: 13px;
+            outline: none;
+        }
+        input[type="text"]:focus, select:focus, textarea:focus {
+            border-color: #4e8cff;
+            box-shadow: 0 0 0 2px rgba(78, 140, 255, 0.15);
+        }
+        textarea {
+            resize: vertical;
+            min-height: 52px;
+        }
+        button {
+            border: none;
+            border-radius: 6px;
+            padding: 6px 12px;
+            font-size: 13px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .btn-primary {
+            background: linear-gradient(120deg,#4e8cff,#7c5cff);
+            color: #fff;
+        }
+        .btn-primary:hover {
+            opacity: 0.95;
+        }
+        .btn-ghost {
+            background-color: #f3f4f8;
+            color: #555;
+        }
+        .btn-ghost:hover {
+            background-color: #e5e7f1;
+        }
+        .btn-danger {
+            background-color: #ff5f5f;
+            color: #fff;
+        }
+        .btn-danger:hover {
+            opacity: 0.95;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 8px;
+            font-size: 13px;
+        }
+        th, td {
+            padding: 6px 8px;
+            border-bottom: 1px solid #eef0f6;
+            text-align: left;
+        }
+        th {
+            background-color: #f7f9fd;
+            font-weight: 600;
+            color: #666;
+        }
+        tr:hover {
+            background-color: #fafbff;
+        }
+        .tag {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 10px;
+            font-size: 11px;
+            background-color: #edf2ff;
+            color: #4658d6;
+        }
+        .tag-gray {
+            background-color: #f1f3f7;
+            color: #7a7f8c;
+        }
+        .tag-green {
+            background-color: #e6f7ec;
+            color: #177245;
+        }
+        .text-muted {
+            color: #888;
+            font-size: 12px;
+        }
+        .status-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 6px;
+        }
+        .status-on {
+            background-color: #3ac37a;
+            box-shadow: 0 0 0 4px rgba(58,195,122,0.25);
+        }
+        .status-off {
+            background-color: #d3d7e5;
+        }
+        .flex {
+            display: flex;
+            align-items: center;
+        }
+        .flex-space {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .mt-4 { margin-top: 4px; }
+        .mt-8 { margin-top: 8px; }
+        .mt-12 { margin-top: 12px; }
+        .mt-16 { margin-top: 16px; }
+        .badge {
+            display: inline-block;
+            font-size: 11px;
+            padding: 2px 6px;
+            border-radius: 999px;
+            background-color: #fff;
+            color: #4e8cff;
+            border: 1px solid rgba(255,255,255,0.4);
+        }
+        .mode-sel { border-color: #4e8cff !important; background: #f5f8ff !important; }
+        .policy-tag { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 14px; font-size: 12px; }
+        .policy-tag.white { background: #e8f5e9; color: #2e7d32; }
+        .policy-tag.black { background: #fff3f0; color: #c0392b; }
+        .policy-tag .rm { cursor: pointer; font-weight: bold; opacity: 0.5; }
+        .policy-tag .rm:hover { opacity: 1; }
+        @media (max-width: 720px) {
+            main { padding: 0 8px 24px; }
+            .card { padding: 14px 14px 16px; }
+        }
+    </style>
+</head>
+<body>
+<header>
+    <h1>识流 AI 助手 · 私域运营 MVP</h1>
+    <p>监听单聊 + 自动回复（关键词 / 大模型），当前版本为简易 MVP，仅供内测使用</p>
+</header>
+
+<main>
+    <section class="card">
+        <h2>
+            总开关
+            <span class="small">
+                <span id="autoStatusDot" class="status-dot status-off"></span>
+                <span id="autoStatusText">--</span>
+            </span>
+        </h2>
+        <div class="flex-space mt-8">
+            <div class="text-muted">自动回复总开关：开启后才会处理消息并回复</div>
+            <label class="switch"><input type="checkbox" id="autoSwitch"><span class="slider"></span></label>
+        </div>
+        <div class="flex-space mt-8" style="border-top:1px solid #f0f2f5;padding-top:12px">
+            <div class="text-muted">AI 回复：开启后关键词未命中时调用大模型；关闭后只走关键词规则</div>
+            <label class="switch"><input type="checkbox" id="aiSwitch"><span class="slider"></span></label>
+        </div>
+    </section>
+
+    <section class="card">
+        <h2>
+            回复策略
+            <span class="small">控制哪些联系人自动回复</span>
+        </h2>
+        <div class="text-muted mt-4">默认回复模式</div>
+        <div class="form-row mt-8" style="gap:10px">
+            <div class="form-group" style="flex:1;min-width:auto;text-align:center;padding:12px;border:2px solid #d0d7e2;border-radius:8px;cursor:pointer" data-mode="reply" onclick="setMode('reply')">
+                <div style="font-weight:600;font-size:14px">全部回复</div><div style="font-size:11px;color:#888;margin-top:2px">黑名单除外</div>
+            </div>
+            <div class="form-group" style="flex:1;min-width:auto;text-align:center;padding:12px;border:2px solid #d0d7e2;border-radius:8px;cursor:pointer" data-mode="skip" onclick="setMode('skip')">
+                <div style="font-weight:600;font-size:14px">仅白名单</div><div style="font-size:11px;color:#888;margin-top:2px">只回复白名单</div>
+            </div>
+            <div class="form-group" style="flex:1;min-width:auto;text-align:center;padding:12px;border:2px solid #d0d7e2;border-radius:8px;cursor:pointer" data-mode="ask" onclick="setMode('ask')">
+                <div style="font-weight:600;font-size:14px">无限制</div><div style="font-size:11px;color:#888;margin-top:2px">回复所有人</div>
+            </div>
+        </div>
+        <div class="form-row mt-12" style="gap:16px">
+            <div class="form-group">
+                <label>白名单（始终回复）</label>
+                <div id="whiteTags" style="min-height:36px;padding:6px;border:1px dashed #d0d7e2;border-radius:6px;display:flex;flex-wrap:wrap;gap:4px;align-items:center">
+                    <span class="text-muted">--</span>
+                </div>
+                <div class="flex mt-4" style="gap:6px">
+                    <input type="text" id="whiteInput" placeholder="输入名字" style="flex:1" onkeydown="if(event.key==='Enter')addPolicy('white')">
+                    <button class="btn-primary" onclick="addPolicy('white')">添加</button>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>黑名单（永不回复）</label>
+                <div id="blackTags" style="min-height:36px;padding:6px;border:1px dashed #d0d7e2;border-radius:6px;display:flex;flex-wrap:wrap;gap:4px;align-items:center">
+                    <span class="text-muted">--</span>
+                </div>
+                <div class="flex mt-4" style="gap:6px">
+                    <input type="text" id="blackInput" placeholder="输入名字" style="flex:1" onkeydown="if(event.key==='Enter')addPolicy('black')">
+                    <button class="btn-primary" onclick="addPolicy('black')">添加</button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="card">
+        <h2>
+            自动回复规则
+            <span class="small">按顺序匹配，先命中规则，再fallback 到 AI</span>
+        </h2>
+        <form id="ruleForm">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>关键词（如：报名、价格、课程）</label>
+                    <input type="text" id="keyword" placeholder="输入关键词">
+                </div>
+                <div class="form-group" style="max-width:180px;">
+                    <label>匹配方式</label>
+                    <select id="match_type">
+                        <option value="contain">包含关键词即可</option>
+                        <option value="equal">完全等于</option>
+                    </select>
+                </div>
+                <div class="form-group" style="max-width:150px;">
+                    <label>状态</label>
+                    <select id="is_active">
+                        <option value="1">启用</option>
+                        <option value="0">停用</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>固定回复内容</label>
+                <textarea id="reply_text" placeholder="例如：您好，报名请点击链接：https://xxx 或 回复【1】获取更多信息"></textarea>
+            </div>
+            <div class="mt-8">
+                <button type="submit" class="btn-primary">保存规则</button>
+                <span class="text-muted">建议：把高频问题先配成规则，AI 兜底个性化回答。</span>
+            </div>
+        </form>
+
+        <div class="mt-12">
+            <div class="flex-space">
+                <div class="text-muted">当前规则列表</div>
+                <button class="btn-ghost" type="button" onclick="loadRules()">刷新</button>
+            </div>
+            <table id="rulesTable">
+                <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>关键词</th>
+                    <th>匹配方式</th>
+                    <th>回复内容</th>
+                    <th>状态</th>
+                    <th>操作</th>
+                </tr>
+                </thead>
+                <tbody>
+                <tr><td colspan="6" class="text-muted">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="card">
+        <h2>
+            最近消息记录
+            <span class="small">仅展示最近 50 条（新消息在上）</span>
+        </h2>
+        <div class="flex-space mt-4">
+            <div class="text-muted">
+                标记说明：
+                <span class="tag tag-green">in 收到</span>
+                <span class="tag">out 发出</span>
+                <span class="tag tag-gray">AI</span>
+            </div>
+            <button class="btn-ghost" type="button" onclick="loadMessages()">刷新</button>
+        </div>
+        <table id="messagesTable" class="mt-8">
+            <thead>
+            <tr>
+                <th>ID</th>
+                <th>微信用户</th>
+                <th>方向</th>
+                <th>内容</th>
+                <th>规则/AI</th>
+                <th>时间</th>
+            </tr>
+            </thead>
+            <tbody>
+            <tr><td colspan="6" class="text-muted">加载中...</td></tr>
+            </tbody>
+        </table>
+    </section>
+</main>
+
+<script>
+    const AR = 'api_rules.php', AP = 'api_policy.php';
+    let policy = null;
+
+    function toast(m, ok) { alert(m); }
+
+    function updateUI(d) {
+        let dot = document.getElementById('autoStatusDot'), txt = document.getElementById('autoStatusText');
+        let on = !!d.auto_reply_enabled;
+        document.getElementById('autoSwitch').checked = on;
+        document.getElementById('aiSwitch').checked = !!d.ai_enabled;
+        if (on) { dot.classList.remove('status-off'); dot.classList.add('status-on'); txt.textContent = '已开启'; }
+        else { dot.classList.remove('status-on'); dot.classList.add('status-off'); txt.textContent = '已关闭'; }
+    }
+
+    async function loadSettings() {
+        let r = await fetch(AR + '?action=settings_get'), d = await r.json();
+        if (d.success) updateUI(d);
+    }
+
+    async function toggleSetting(key, val) {
+        let f = new FormData(); f.append('action', 'settings_set'); f.append(key, val ? '1' : '0');
+        await fetch(AR, { method: 'POST', body: f });
+    }
+    document.getElementById('autoSwitch').onchange = function () {
+        toggleSetting('auto_reply_enabled', this.checked);
+        let d = document.getElementById('autoStatusDot'), t = document.getElementById('autoStatusText');
+        if (this.checked) { d.classList.remove('status-off'); d.classList.add('status-on'); t.textContent = '已开启'; }
+        else { d.classList.remove('status-on'); d.classList.add('status-off'); t.textContent = '已关闭'; }
+    };
+    document.getElementById('aiSwitch').onchange = function () { toggleSetting('ai_enabled', this.checked); };
+
+    // ---- 策略 ----
+    async function loadPolicy() { let r = await fetch(AP + '?action=get'), d = await r.json(); if (d.success) { policy = d.data; renderPolicy(); } }
+    function renderPolicy() {
+        if (!policy) return;
+        document.querySelectorAll('[data-mode]').forEach(c => c.classList.toggle('mode-sel', c.dataset.mode === policy.default));
+        let w = document.getElementById('whiteTags'), b = document.getElementById('blackTags');
+        let wa = policy.always_reply || [], na = policy.never_reply || [];
+        w.innerHTML = wa.length ? wa.map(n => `<span class="policy-tag white">${n}<span class="rm" onclick="removePolicy('white','${n.replace(/'/g, "\\'")}')">&times;</span></span>`).join('') : '<span class="text-muted">暂无</span>';
+        b.innerHTML = na.length ? na.map(n => `<span class="policy-tag black">${n}<span class="rm" onclick="removePolicy('black','${n.replace(/'/g, "\\'")}')">&times;</span></span>`).join('') : '<span class="text-muted">暂无</span>';
+    }
+    async function setMode(m) {
+        let r = await fetch(AP + '?action=set_default', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ default: m }) });
+        let d = await r.json(); if (d.success) { policy.default = m; renderPolicy(); }
+    }
+    async function addPolicy(t) {
+        let el = document.getElementById(t === 'white' ? 'whiteInput' : 'blackInput'), n = el.value.trim(); if (!n) return;
+        let r = await fetch(AP + '?action=add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ list: t, name: n }) });
+        let d = await r.json(); if (d.success) { policy = d.data; renderPolicy(); el.value = ''; }
+    }
+    async function removePolicy(t, n) {
+        let r = await fetch(AP + '?action=remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ list: t, name: n }) });
+        let d = await r.json(); if (d.success) { policy = d.data; renderPolicy(); }
+    }
+
+    // ---- 规则 ----
+    async function loadRules() {
+        let tbody = document.querySelector('#rulesTable tbody');
+        tbody.innerHTML = '<tr><td colspan="6" class="text-muted">加载中...</td></tr>';
+        let r = await fetch(AR + '?action=list'), d = await r.json();
+        if (!d.success || !d.data.length) { tbody.innerHTML = '<tr><td colspan="6" class="text-muted">暂无规则</td></tr>'; return; }
+        tbody.innerHTML = d.data.map(rule => `<tr>
+            <td>${rule.id}</td><td>${rule.keyword}</td><td>${rule.match_type === 'equal' ? '完全匹配' : '包含'}</td>
+            <td style="max-width:360px;word-break:break-all">${rule.reply_text}</td>
+            <td><span class="tag ${rule.is_active == 1 ? 'tag-green' : 'tag-gray'}">${rule.is_active == 1 ? '启用' : '停用'}</span></td>
+            <td><button class="btn-ghost" onclick="toggleRule(${rule.id},${rule.is_active == 1 ? 0 : 1})">${rule.is_active == 1 ? '停用' : '启用'}</button>
+            <button class="btn-danger" onclick="deleteRule(${rule.id})">删除</button></td></tr>`).join('');
+    }
+    async function toggleRule(id, a) {
+        if (!confirm('确定？')) return; let f = new FormData(); f.append('action', 'toggle'); f.append('id', id); f.append('is_active', a);
+        await fetch(AR, { method: 'POST', body: f }); loadRules();
+    }
+    async function deleteRule(id) {
+        if (!confirm('确定删除？')) return; let f = new FormData(); f.append('action', 'delete'); f.append('id', id);
+        await fetch(AR, { method: 'POST', body: f }); loadRules();
+    }
+
+    // ---- 消息 ----
+    async function loadMessages() {
+        let tbody = document.querySelector('#messagesTable tbody');
+        tbody.innerHTML = '<tr><td colspan="6" class="text-muted">加载中...</td></tr>';
+        let r = await fetch(AR + '?action=messages_recent&limit=50'), d = await r.json();
+        if (!d.success || !d.data.length) { tbody.innerHTML = '<tr><td colspan="6" class="text-muted">暂无消息</td></tr>'; return; }
+        tbody.innerHTML = d.data.map(row => {
+            let td = row.direction === 'in' ? '<span class="tag tag-green">in 收到</span>' : '<span class="tag">out 发出</span>';
+            let ta = row.is_ai_reply == 1 ? '<span class="tag tag-gray">AI</span>' : '';
+            let ri = row.rule_id ? '规则 #' + row.rule_id : (row.is_ai_reply == 1 ? 'AI 生成' : '-');
+            return `<tr><td>${row.id}</td><td>${row.wx_nickname || row.wx_user_id || '-'}</td><td>${td}</td>
+            <td style="max-width:340px;word-break:break-all">${row.content}</td><td>${ri} ${ta}</td><td>${row.created_at}</td></tr>`;
+        }).join('');
+    }
+
+    document.getElementById('ruleForm').addEventListener('submit', async function (e) {
+        e.preventDefault();
+        let k = document.getElementById('keyword').value.trim(), r = document.getElementById('reply_text').value.trim();
+        if (!k || !r) { toast('关键词和回复内容不能为空'); return; }
+        let f = new FormData(); f.append('action', 'create'); f.append('keyword', k);
+        f.append('match_type', document.getElementById('match_type').value); f.append('reply_text', r);
+        f.append('is_active', document.getElementById('is_active').value);
+        let res = await fetch(AR, { method: 'POST', body: f }), d = await res.json();
+        if (d.success) { document.getElementById('keyword').value = ''; document.getElementById('reply_text').value = ''; loadRules(); toast('保存成功'); }
+        else toast('保存失败');
+    });
+
+    loadSettings(); loadPolicy(); loadRules(); loadMessages();
+</script>
+</body>
+</html>
+
+
