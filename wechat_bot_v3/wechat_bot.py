@@ -605,14 +605,17 @@ class WechatBotV6:
 
         # 1. 自适应行高
         heights = [h for _, _, _, _, h in items if h > 0]
-        if not heights:
-            return [(t, y) for t, y, _, _, _ in items]
-        avg_h = sorted(heights)[len(heights) // 2]
-        if avg_h < 10:
-            avg_h = 16
+        if heights:
+            avg_h = sorted(heights)[len(heights) // 2]
+            if avg_h < 10:
+                avg_h = 16
+        else:
+            avg_h = 16  # OCR未返回高度时用默认值
+            logger.info(f"  ⚠ OCR未返回高度信息，使用默认行高{avg_h}px")
 
-        SAME_LINE = avg_h * 0.3
-        NEW_BLOCK = avg_h * 2.5
+        SAME_LINE = max(avg_h * 0.3, 3)
+        NEW_BLOCK = max(avg_h * 2.5, 20)
+        logger.info(f"  [昵称过滤] 输入{len(items)}条, avg_h={avg_h:.0f}px, SAME_LINE={SAME_LINE:.0f}, NEW_BLOCK={NEW_BLOCK:.0f}")
 
         # 2. 并排归行：Y差 < SAME_LINE 的条目合并
         sorted_items = sorted(items, key=lambda x: x[1])
@@ -648,12 +651,15 @@ class WechatBotV6:
             current.append((best[0], best[1], best[2]))
 
         blocks.append(current)
+        logger.info(f"  [昵称过滤] {len(lines)}行 → {len(blocks)}个消息块")
 
         # 4. 块内识别昵称
         nicknames = set()
         ambiguous_blocks = []
 
         for bi, block in enumerate(blocks):
+            block_texts = [t for t, _, _ in block]
+            logger.info(f"  [块{bi}] {len(block)}行: {block_texts}")
             if len(block) == 1:
                 if len(block[0][0].strip()) <= 15:
                     ambiguous_blocks.append(bi)
