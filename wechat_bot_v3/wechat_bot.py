@@ -596,98 +596,46 @@ class WechatBotV6:
         return set()
 
     def filter_group_nicknames(self, items):
-        """空间聚类 + 群聊昵称过滤。必要时AI兜底。
-        items: [(text, y, left, w, h), ...]
+        """序列模式 + 群聊昵称过滤。必要时AI兜底。
+        items: [(text, y, left, w, h), ...]  — 已按OCR阅读顺序（上→下）
         返回: [(text, y), ...] 过滤昵称后的消息
         """
         if not items:
             return []
 
-        # 1. 自适应行高
-        heights = [h for _, _, _, _, h in items if h > 0]
-        if heights:
-            avg_h = sorted(heights)[len(heights) // 2]
-            if avg_h < 10:
-                avg_h = 16
-        else:
-            avg_h = 16  # OCR未返回高度时用默认值
-            logger.info(f"  ⚠ OCR未返回高度信息，使用默认行高{avg_h}px")
+        logger.info(f"  [昵称过滤] 输入{len(items)}条")
 
-        SAME_LINE = max(avg_h * 0.3, 3)
-        NEW_BLOCK = max(avg_h * 2.5, 20)
-        logger.info(f"  [昵称过滤] 输入{len(items)}条, avg_h={avg_h:.0f}px, SAME_LINE={SAME_LINE:.0f}, NEW_BLOCK={NEW_BLOCK:.0f}")
-
-        # 2. 并排归行：Y差 < SAME_LINE 的条目合并
-        sorted_items = sorted(items, key=lambda x: x[1])
-        lines = []  # [[(text,y,left,w,h), ...], ...]
-        for entry in sorted_items:
-            text, y, left, w, h = entry
-            placed = False
-            for line in lines:
-                if abs(y - line[0][1]) < SAME_LINE:
-                    line.append(entry)
-                    placed = True
-                    break
-            if not placed:
-                lines.append([entry])
-
-        # 3. 行归块：间距 >= NEW_BLOCK 处切分
-        blocks = []  # [[(text,y,left), ...], ...]
-        # 每行取最长文本
-        current = [(max(lines[0], key=lambda x: len(x[0]))[0],
-                     lines[0][0][1],
-                     min(lines[0], key=lambda x: x[2])[2])]
-
-        for i in range(1, len(lines)):
-            prev_max_y = max(it[1] + it[4] for it in lines[i - 1])  # prev line bottom
-            curr_min_y = min(it[1] for it in lines[i])              # curr line top
-            gap = curr_min_y - prev_max_y
-
-            if gap >= NEW_BLOCK:
-                blocks.append(current)
-                current = []
-
-            best = max(lines[i], key=lambda x: len(x[0]))
-            current.append((best[0], best[1], best[2]))
-
-        blocks.append(current)
-        logger.info(f"  [昵称过滤] {len(lines)}行 → {len(blocks)}个消息块")
-
-        # 4. 块内识别昵称
+        # 1. 序列模式检测：短→长 过渡 = 昵称→消息
+        #    百度OCR按阅读顺序返回，群聊中"昵称在上、消息在下"体现为序列中"短→长"跳跃
         nicknames = set()
-        ambiguous_blocks = []
+        texts = [t.strip() for t, _, _, _, _ in items]
 
-        for bi, block in enumerate(blocks):
-            block_texts = [t for t, _, _ in block]
-            logger.info(f"  [块{bi}] {len(block)}行: {block_texts}")
-            if len(block) == 1:
-                if len(block[0][0].strip()) <= 15:
-                    ambiguous_blocks.append(bi)
-            elif len(block) >= 2:
-                first = block[0][0].strip()
-                if len(first) <= 15:
-                    nicknames.add(first)
+        for i in range(len(texts) - 1):
+            curr, nxt = texts[i], texts[i + 1]
+            if not curr or not nxt:
+                continue
+            # 当前短 + 下一条明显更长 → 当前是昵称
+            if len(curr) <= 15 and len(nxt) >= len(curr) * 1.5:
+                nicknames.add(curr)
 
-        # 5. 群聊判定：不同昵称 >= 2 个
+        # 2. 群聊判定
         is_group = len(nicknames) >= 2
 
         if not is_group:
             logger.info(f"  判定为单聊，跳过昵称过滤")
             return [(t, y) for t, y, _, _, _ in items]
 
-        logger.info(f"  判定为群聊，识别昵称: {nicknames}")
+        logger.info(f"  判定为群聊（序列模式），昵称候选: {nicknames}")
 
-        # 6. AI兜底（仅群聊 + 有含糊块）
-        if ambiguous_blocks:
-            logger.info(f"  存在{len(ambiguous_blocks)}个含糊块，触发AI兜底")
-            ai_names = self._ai_fallback_detect_nicknames(items)
-            for name in ai_names:
-                if len(name.strip()) <= 15:
-                    nicknames.add(name.strip())
-            if ai_names:
-                logger.info(f"  AI补充昵称: {ai_names}")
+        # 3. AI兜底：用DeepSeek验证并补充昵称
+        ai_names = self._ai_fallback_detect_nicknames(items)
+        for name in ai_names:
+            if len(name.strip()) <= 15:
+                nicknames.add(name.strip())
+        if ai_names:
+            logger.info(f"  AI补充/确认昵称: {ai_names}")
 
-        # 7. 过滤
+        # 4. 过滤
         n_filtered = 0
         result = []
         for text, y, left, w, h in items:
