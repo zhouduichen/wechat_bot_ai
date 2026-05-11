@@ -368,7 +368,7 @@ class WechatBotV6:
     def get_all_messages(self, wr):
         """OCR聊天区：遮罩绿色气泡后识别对方消息，同时检测绿色气泡位置（自己消息）
         返回 (msgs, self_bubbles)
-        msgs: [(text, screen_y, is_self=False, left), ...]
+        msgs: [(text, screen_y, is_self=False, left, w, h), ...]
         self_bubbles: [(y1, y2), ...] 自己气泡的屏幕Y范围"""
         region = self.chat_region(wr)
         shot = ImageGrab.grab(bbox=region)
@@ -400,25 +400,11 @@ class WechatBotV6:
         masked.convert("RGB").save(buf, format="JPEG", quality=75)
         items = self.ocr.recognize(buf.getvalue())
 
-        aw = region[2] - region[0]
         msgs = []
         for text, left, top, w, h in items:
             text_y = region[1] + top
-            msgs.append((text, text_y, False, left))
+            msgs.append((text, text_y, False, left, w, h))
 
-        # 过滤群聊名字：贴左边 + 短 + 下方50px内有另一条对方消息
-        n_name = 0
-        left_limit = max(55, aw * 0.08)
-        filtered = []
-        for i, (t, ty, _, l) in enumerate(msgs):
-            if (l < left_limit and len(t.strip()) <= 8 and
-                any(oy > ty and oy - ty < 50 for _, oy, _, _ in msgs)):
-                n_name += 1
-                continue
-            filtered.append((t, ty, False, l))
-        if n_name > 0:
-            logger.info(f"  过滤群名: {n_name}条")
-        msgs = filtered
 
         msgs.sort(key=lambda x: x[1])
 
@@ -429,7 +415,7 @@ class WechatBotV6:
         print(f"  OCR: {len(items)}条对方消息  绿色气泡: {len(self_bubbles)}个")
         logger.info(f"  OCR: {len(items)}条对方消息  绿色气泡: {len(self_bubbles)}个")
         if msgs:
-            logger.info(f"  样本: {' | '.join(t[:12] for t, _, _, _ in msgs[:6])}")
+            logger.info(f"  样本: {' | '.join(t[:12] for t, _, _, _, _, _ in msgs[:6])}")
         return msgs, self_bubbles
 
     @staticmethod
