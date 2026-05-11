@@ -771,25 +771,28 @@ class WechatBotV6:
         # 7. 收集所有对方消息（OCR已遮罩绿色，全是对方消息，is_self恒False）
         all_other = []
         for page in pages_msgs:
-            for t, y, _, l in page:
-                all_other.append((t, y, l))
+            for t, y, _, l, w, h in page:
+                all_other.append((t, y, l, w, h))
+
+        # 7.5 过滤群聊昵称
+        filtered_other = self.filter_group_nicknames(all_other)
 
         # 先逐条 should_skip 过滤
         raw_unanswered = []
         n_skipped = 0
-        for text, y, l in all_other:
+        for text, y in filtered_other:
             skip_reason = self._skip_reason(text)
             if skip_reason:
                 n_skipped += 1
                 print(f"  [{idx}] ⏭ 过滤 [{text[:30]}] 原因: {skip_reason}")
                 logger.info(f"[{idx}] should_skip: {text[:40]}")
                 continue
-            raw_unanswered.append((text, y, l))
+            raw_unanswered.append((text, y))
 
         # 不合并，每条OCR结果独立作为候选消息
         # 剔除嵌入的时间/日期（"17:11你好" → "你好"），剔除后为空则跳过
         cleaned = []
-        for t, y, l in raw_unanswered:
+        for t, y in raw_unanswered:
             ct = self._clean_time_text(t)
             if ct is None:
                 print(f"  [{idx}] ⏭ 纯时间/日期: [{t[:30]}]")
@@ -867,7 +870,7 @@ class WechatBotV6:
 
         # 10. 回复后尾扫：捕获对方秒回的新消息（最多5轮）
         if sent_any and not self.mouse_clicked():
-            seen_texts = {t.strip() for t, _, _ in all_other}
+            seen_texts = {t.strip() for t, _, _, _, _ in all_other}
             seen_texts.update(t.strip() for t, _ in unanswered)
             for tail_round in range(5):
                 if self.mouse_clicked():
@@ -879,7 +882,7 @@ class WechatBotV6:
                     logger.info(f"[{idx}] 尾扫无消息，结束")
                     break
                 new_msgs = []
-                for text, y, _, _ in tail_msgs:
+                for text, y, _, l, w, h in tail_msgs:
                     t = text.strip()
                     if t and t not in seen_texts:
                         new_msgs.append((t, y))
