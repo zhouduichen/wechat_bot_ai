@@ -1,0 +1,10 @@
+{
+    "keywords": [
+        {"keyword": "拍了拍", "match_type": "contain", "is_active": true},
+        {"keyword": "[图片]", "match_type": "contain", "is_active": true},
+        {"keyword": "[语音]", "match_type": "contain", "is_active": true},
+        {"keyword": "[视频]", "match_type": "contain", "is_active": true},
+        {"keyword": "[文件]", "match_type": "contain", "is_active": true},
+        {"keyword": "[表情]", "match_type": "contain", "is_active": true}
+    ]
+}

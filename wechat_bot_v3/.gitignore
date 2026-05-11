@@ -1,0 +1,23 @@
+# 调试截图
+debug_screenshots/
+debug_empty_ocr_*.png
+debug_*.png
+
+# 日志
+*.log
+@*
+
+# Claude Code
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 模型训练中间产物
+model/wechat_red_dot/
+
+# 敏感配置（如 API Key 等 .env 文件）
+.env

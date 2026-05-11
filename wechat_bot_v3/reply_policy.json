@@ -1,14 +1,15 @@
 {
-    "default": "reply",
-    "always_reply": [],
-    "never_reply": [
-        "文件传输助手",
-        "微信团队",
-        "大一下",
-        "公众号",
-        "微信支付",
-        "服务号",
-        "公共号"
-    ],
-    "contact_overrides": []
+  "default": "reply",
+  "always_reply": [],
+  "never_reply": [
+    "文件传输助手",
+    "微信团队",
+    "大一下",
+    "公众号",
+    "微信支付",
+    "服务号",
+    "公共号",
+    "视频号"
+  ],
+  "contact_overrides": []
 }

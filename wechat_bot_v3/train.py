@@ -18,11 +18,11 @@ LABEL_DIR = os.path.join(BASE, "dataset", "labels")
 MODEL_DIR = os.path.join(BASE, "model")
 os.makedirs(MODEL_DIR, exist_ok=True)
 
-EPOCHS = 30
+EPOCHS = 60
 IMG_SIZE = 640
 BATCH = 32
 WORKERS = 4
-PATIENCE = 10
+PATIENCE = 20
 
 
 def auto_split():
@@ -54,14 +54,20 @@ def auto_split():
     for img in train_imgs:
         shutil.move(img, os.path.join(train_img, os.path.basename(img)))
         lbl = os.path.join(LABEL_DIR, os.path.splitext(os.path.basename(img))[0] + ".txt")
+        dst_lbl = os.path.join(train_lbl, os.path.basename(lbl))
         if os.path.exists(lbl):
-            shutil.move(lbl, os.path.join(train_lbl, os.path.basename(lbl)))
+            shutil.move(lbl, dst_lbl)
+        else:
+            open(dst_lbl, 'w').close()  # 无红点的负样本也创建空标签
 
     for img in val_imgs:
         shutil.move(img, os.path.join(val_img, os.path.basename(img)))
         lbl = os.path.join(LABEL_DIR, os.path.splitext(os.path.basename(img))[0] + ".txt")
+        dst_lbl = os.path.join(val_lbl, os.path.basename(lbl))
         if os.path.exists(lbl):
-            shutil.move(lbl, os.path.join(val_lbl, os.path.basename(lbl)))
+            shutil.move(lbl, dst_lbl)
+        else:
+            open(dst_lbl, 'w').close()
 
     print(f"训练集: {len(train_imgs)} 张 | 验证集: {len(val_imgs)} 张")
 
@@ -100,27 +106,28 @@ def main():
         verbose=True,
         workers=WORKERS,       # 多线程加载数据
         cache=True,            # 缓存图片到内存，减少IO
-        # 针对小数据集的优化参数
+        # 针对小目标（红点）检测的优化参数
         cos_lr=True,           # cosine学习率衰减
-        warmup_epochs=5,       # 预热轮数（小数据集多预热几轮）
-        lr0=0.0005,            # 学习率（小数据集用更小的lr）
+        warmup_epochs=3,       # 预热轮数
+        lr0=0.0003,            # 学习率（更小更稳定）
         lrf=0.01,              # 最终lr因子
         momentum=0.937,
-        weight_decay=0.0005,
-        # 数据增强（小数据集加强增强）
-        hsv_h=0.015,           # 色调变化
-        hsv_s=0.7,             # 饱和度变化
-        hsv_v=0.4,             # 明度变化
-        degrees=5.0,           # 旋转角度
-        translate=0.1,         # 平移
-        scale=0.5,             # 缩放
+        weight_decay=0.0003,
+        # 数据增强 — 红点极小且颜色关键，大幅降低增强强度
+        hsv_h=0.0,             # 禁色调变化（红色是核心特征！）
+        hsv_s=0.2,             # 饱和度变化（红点饱和度稳定）
+        hsv_v=0.3,             # 明度变化（适中）
+        degrees=3.0,           # 旋转角度（红点小，旋转无意义）
+        translate=0.08,        # 平移
+        scale=0.3,             # 缩放（减小缩放范围）
         shear=0.0,
         perspective=0.0,
         flipud=0.0,
-        fliplr=0.5,
-        mosaic=0.5,            # mosaic增强（小目标检测降低比例）
-        mixup=0.1,             # mixup增强
-        copy_paste=0.1,        # copy-paste增强（小目标友好）
+        fliplr=0.0,            # 禁水平翻转（红点只在左侧列表）
+        mosaic=0.2,            # mosaic（降低，碎片化对微小红点不利）
+        mixup=0.0,             # 禁mixup（单类微目标，混叠会混淆）
+        copy_paste=0.0,        # 禁copy-paste（单类目标不需要）
+        close_mosaic=5,        # 提前关闭mosaic（让模型适应真实分布）
     )
 
     # 4. 导出最佳模型到 model/wechat_dot.pt
