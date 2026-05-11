@@ -545,6 +545,56 @@ class WechatBotV6:
     def should_skip(self, text):
         return self._skip_reason(text) is not None
 
+    def _ai_fallback_detect_nicknames(self, items):
+        """AI兜底识别群聊昵称。失败返回空set，调用方降级用聚类结果。
+        items: [(text, y, left, w, h), ...]
+        """
+        prompt_parts = []
+        for i, (text, y, left, w, h) in enumerate(items):
+            prompt_parts.append(f"[{i}]{text}(y={y})")
+        prompt = "\n".join(prompt_parts)
+
+        system_prompt = (
+            "你是微信聊天OCR分析助手。"
+            "以下是一个群聊窗口OCR识别的文字列表，每项格式为[序号]文字(y=纵向坐标)。"
+            "群成员昵称是显示在消息上方的小号彩色文字，通常很短（≤15字），位于消息正文的正上方。"
+            "请找出所有群成员昵称，返回JSON：{\"names\": [\"昵称1\", \"昵称2\"]}。"
+            "不要返回其他内容。"
+        )
+
+        try:
+            url = f"{DEEPSEEK_API_BASE}/chat/completions"
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {DEEPSEEK_API_KEY}"
+            }
+            payload = {
+                "model": DEEPSEEK_MODEL,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.1,
+                "max_tokens": 100,
+            }
+            r = requests.post(url, headers=headers, json=payload, timeout=3)
+            if r.status_code == 200:
+                d = r.json()
+                content = d.get("choices", [{}])[0].get("message", {}).get("content", "")
+                # 提取JSON（兼容非JSON模式）
+                content = content.strip()
+                if content.startswith("```"):
+                    content = content.split("\n", 1)[1].rsplit("\n", 1)[0]
+                data = json.loads(content)
+                names = data.get("names", [])
+                if isinstance(names, list):
+                    logger.info(f"AI昵称兜底识别: {names}")
+                    return set(n.strip() for n in names if n.strip())
+        except Exception as e:
+            logger.info(f"AI昵称兜底失败，降级用聚类结果: {e}")
+
+        return set()
+
     # ---- 预检：从列表直接读名字 ----
 
     def read_name_in_list(self, wr, dot):
