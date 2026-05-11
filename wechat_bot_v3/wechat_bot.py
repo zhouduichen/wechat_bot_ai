@@ -595,6 +595,104 @@ class WechatBotV6:
 
         return set()
 
+    def filter_group_nicknames(self, items):
+        """空间聚类 + 群聊昵称过滤。必要时AI兜底。
+        items: [(text, y, left, w, h), ...]
+        返回: [(text, y), ...] 过滤昵称后的消息
+        """
+        if not items:
+            return []
+
+        # 1. 自适应行高
+        heights = [h for _, _, _, _, h in items if h > 0]
+        if not heights:
+            return [(t, y) for t, y, _, _, _ in items]
+        avg_h = sorted(heights)[len(heights) // 2]
+        if avg_h < 10:
+            avg_h = 16
+
+        SAME_LINE = avg_h * 0.3
+        NEW_BLOCK = avg_h * 2.5
+
+        # 2. 并排归行：Y差 < SAME_LINE 的条目合并
+        sorted_items = sorted(items, key=lambda x: x[1])
+        lines = []  # [[(text,y,left,w,h), ...], ...]
+        for entry in sorted_items:
+            text, y, left, w, h = entry
+            placed = False
+            for line in lines:
+                if abs(y - line[0][1]) < SAME_LINE:
+                    line.append(entry)
+                    placed = True
+                    break
+            if not placed:
+                lines.append([entry])
+
+        # 3. 行归块：间距 >= NEW_BLOCK 处切分
+        blocks = []  # [[(text,y,left), ...], ...]
+        # 每行取最长文本
+        current = [(max(lines[0], key=lambda x: len(x[0]))[0],
+                     lines[0][0][1],
+                     min(lines[0], key=lambda x: x[2])[2])]
+
+        for i in range(1, len(lines)):
+            prev_max_y = max(it[1] + it[4] for it in lines[i - 1])  # prev line bottom
+            curr_min_y = min(it[1] for it in lines[i])              # curr line top
+            gap = curr_min_y - prev_max_y
+
+            if gap >= NEW_BLOCK:
+                blocks.append(current)
+                current = []
+
+            best = max(lines[i], key=lambda x: len(x[0]))
+            current.append((best[0], best[1], best[2]))
+
+        blocks.append(current)
+
+        # 4. 块内识别昵称
+        nicknames = set()
+        ambiguous_blocks = []
+
+        for bi, block in enumerate(blocks):
+            if len(block) == 1:
+                if len(block[0][0].strip()) <= 15:
+                    ambiguous_blocks.append(bi)
+            elif len(block) >= 2:
+                first = block[0][0].strip()
+                if len(first) <= 15:
+                    nicknames.add(first)
+
+        # 5. 群聊判定：不同昵称 >= 2 个
+        is_group = len(nicknames) >= 2
+
+        if not is_group:
+            logger.info(f"  判定为单聊，跳过昵称过滤")
+            return [(t, y) for t, y, _, _, _ in items]
+
+        logger.info(f"  判定为群聊，识别昵称: {nicknames}")
+
+        # 6. AI兜底（仅群聊 + 有含糊块）
+        if ambiguous_blocks:
+            logger.info(f"  存在{len(ambiguous_blocks)}个含糊块，触发AI兜底")
+            ai_names = self._ai_fallback_detect_nicknames(items)
+            for name in ai_names:
+                if len(name.strip()) <= 15:
+                    nicknames.add(name.strip())
+            if ai_names:
+                logger.info(f"  AI补充昵称: {ai_names}")
+
+        # 7. 过滤
+        n_filtered = 0
+        result = []
+        for text, y, left, w, h in items:
+            if text.strip() in nicknames:
+                n_filtered += 1
+                continue
+            result.append((text, y))
+
+        logger.info(f"  过滤群名: {n_filtered}条, 保留{len(result)}条消息")
+        return result
+
     # ---- 预检：从列表直接读名字 ----
 
     def read_name_in_list(self, wr, dot):
