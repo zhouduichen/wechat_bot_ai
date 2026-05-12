@@ -775,12 +775,16 @@ class WechatBotV6:
 
         # 5. OCR-1: 当前可见聊天区（遮罩绿色后只读对方消息 + 检测绿色气泡位置）
         page1_msgs, page1_bubbles = self.get_all_messages(wr)
+        if not page1_msgs:
+            logger.info(f"[{idx}] 当前屏无文字，翻页重试...")
+            self.pageup(1)
+            page1_msgs, page1_bubbles = self.get_all_messages(wr)
 
         if not page1_msgs:
             logger.info(f"[{idx}] 聊天区无文字")
             return False
 
-        # 6. PageUp翻一页（严格两屏，不回更久远消息）
+        # 6. PageUp翻一页（最多两屏，不回久远消息）
         self.pageup(1)
         page2_msgs, page2_bubbles = self.get_all_messages(wr)
 
