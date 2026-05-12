@@ -645,7 +645,7 @@ class WechatBotV6:
         if len(t) < 2:
             return False
         cjk = sum(1 for c in t if '一' <= c <= '鿿')
-        alpha = sum(1 for c in t if c.isalpha())
+        alpha = sum(1 for c in t if c.isascii() and c.isalpha())
         garbage = len(t) - cjk - alpha
         return garbage <= len(t) * 0.3
 
@@ -777,18 +777,22 @@ class WechatBotV6:
 
         # 5. OCR-1: 当前可见聊天区（遮罩绿色后只读对方消息 + 检测绿色气泡位置）
         page1_msgs, page1_bubbles = self.get_all_messages(wr)
+        retried = False
         if not page1_msgs:
             logger.info(f"[{idx}] 当前屏无文字，翻页重试...")
             self.pageup(1)
             page1_msgs, page1_bubbles = self.get_all_messages(wr)
+            retried = True
 
         if not page1_msgs:
             logger.info(f"[{idx}] 聊天区无文字")
             return False
 
-        # 6. PageUp翻一页（最多两屏，不回久远消息）
-        self.pageup(1)
-        page2_msgs, page2_bubbles = self.get_all_messages(wr)
+        # 6. PageUp翻第二屏（补翻过则跳过，避免翻到更久远消息）
+        page2_msgs, page2_bubbles = [], []
+        if not retried:
+            self.pageup(1)
+            page2_msgs, page2_bubbles = self.get_all_messages(wr)
 
         pages_msgs = [page1_msgs, page2_msgs]
         all_self_bubbles = page1_bubbles + page2_bubbles
