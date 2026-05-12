@@ -712,24 +712,24 @@ class WechatBotV6:
         if not should_reply_to(name, self.policy):
             print(f"  [{idx}] 🚫 黑名单拦截: '{name}' → 不点击")
             logger.info(f"[{idx}] 黑名单跳过: '{name}'")
-            return
+            return False
 
         # 2. 冷却检查
         if ck in self.last_reply:
             elapsed = time.time() - self.last_reply[ck]
             if elapsed < REPLY_COOLDOWN:
                 logger.info(f"[{idx}] 冷却中（{elapsed:.0f}s前），跳过")
-                return
+                return False
 
         # 3. 鼠标点击检测
         if self.mouse_clicked():
             logger.info(f"[{idx}] 鼠标点击，跳过")
-            return
+            return False
 
         # 4. 点击前确认红点仍在
         if not self._verify_red_dot(dot):
             logger.info(f"[{idx}] 红点已消失，跳过")
-            return
+            return False
 
         # 5. 点击进入
         self.click_contact(dot, wr)
@@ -741,7 +741,7 @@ class WechatBotV6:
 
         if not page1_msgs:
             logger.info(f"[{idx}] 聊天区无文字")
-            return
+            return False
 
         # 6. PageUp翻一页（严格两屏，不回更久远消息）
         self.pageup(1)
@@ -784,7 +784,7 @@ class WechatBotV6:
 
         if not candidates:
             print(f"  [{idx}] ❌ 无可见对方消息（OCR{len(all_other)}条，过滤{n_skipped}条）")
-            return
+            return False
 
         print(f"  [{idx}] 📋 候选 {len(candidates)} 条:")
         for t, y in candidates:
@@ -820,7 +820,7 @@ class WechatBotV6:
         if not unanswered:
             print(f"  [{idx}] 无需回复")
             logger.info(f"[{idx}] 无需回复")
-            return
+            return False
 
         print(f"  [{idx}] ✅ 待回复 {len(unanswered)} 条消息")
         # 9. 从旧到新逐条回复，最多5条
@@ -919,6 +919,8 @@ class WechatBotV6:
                         self._round_replied.add(round_key)
                         time.sleep(1.5)
 
+        return sent_any
+
     # ---- 主循环 ----
 
     def run(self):
@@ -957,6 +959,7 @@ class WechatBotV6:
                         print(f"  [页{page+1}] 无红点")
 
                     aborted = False
+                    single_effective = True  # 单红点是否有效
                     if dots:
                         for i, dot in enumerate(dots, 1):
                             if self.mouse_clicked():
@@ -964,8 +967,25 @@ class WechatBotV6:
                                 aborted = True
                                 break
                             print(f"  --- [{total + i}] ---")
-                            self.process_one_contact(dot, wr, total + i)
+                            effective = self.process_one_contact(dot, wr, total + i)
+                            if len(dots) == 1:
+                                single_effective = effective
                             time.sleep(BETWEEN_CONTACTS_WAIT)
+
+                    # 单红点无效：微滚补扫，防止顶部误检挡住下面未读消息
+                    if not aborted and len(dots) == 1 and not single_effective:
+                        logger.info("  单红点无效，微滚补扫...")
+                        pyautogui.scroll(-scroll_step // 2); time.sleep(0.3)
+                        dots2 = self.detect_red_dots_in_view(wr)
+                        if dots2:
+                            print(f"  [页{page+1}补扫] 🔴 检测到 {len(dots2)} 个红点")
+                            for i, dot in enumerate(dots2, 1):
+                                if self.mouse_clicked():
+                                    break
+                                print(f"  --- [{total + i}] ---")
+                                self.process_one_contact(dot, wr, total + i)
+                                time.sleep(BETWEEN_CONTACTS_WAIT)
+                            total += len(dots2)
 
                     if aborted:
                         break
