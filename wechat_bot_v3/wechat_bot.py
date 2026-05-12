@@ -80,6 +80,10 @@ WECHAT_SYSTEM_PATTERNS = [
     r'^\d{1,2}月\d{1,2}日(\s*\d{1,2}[:：]\d{2})?$',
     r'^(周一|周二|周三|周四|周五|周六|周日|星期一|星期二|星期三|星期四|星期五|星期六|星期日)$',
     r'^(你已添加了|以上是打招呼)',
+    r'^共\d+条(新消息)?$',              # 共2条 / 共5条新消息
+    r'^\d+分钟前$',                      # 14分钟前
+    r'^\d{1,2}:\d{2}([-~]\d{1,2}:\d{2})?$',  # 15:30 或 15:30-16:00
+    r'^[a-zA-Z0-9_-]+[：:]\d+[@\w]+$',  # 晨曦：3221350@ / wxid_xxx
 ]
 
 DEBUG_SHOT_DIR = os.path.join(BASE_DIR, "debug_screenshots")
@@ -216,7 +220,8 @@ class WechatBotV6:
         self.dot_model = YOLO(MODEL_PATH)
         self.last_reply = {}
         self._last_user_click = 0
-        self._recent_replies = {}  # 防重复回复: {text: timestamp}
+        self._recent_replies = {}  # 防重复回复: {text: timestamp}（跨轮）
+        self._round_replied = set()  # 本轮已回复: {(ck, text), ...}
         self.ocr = BaiduOCR(BAIDU_API_KEY, BAIDU_SECRET_KEY)
         self.policy = load_policy()
         self.skip_keywords = load_skip_keywords().get("keywords", [])
@@ -269,9 +274,9 @@ class WechatBotV6:
         return dots
 
     def detect_red_dots_in_view(self, wr):
-        """检测当前可见区域的红点（不滚动），min_conf=0.15 宁滥勿缺"""
+        """检测当前可见区域的红点（不滚动），min_conf=0.35 减少误检"""
         region = self.contact_region(wr)
-        dots = self._yolo_detect(region, self.dot_model, min_conf=0.15)
+        dots = self._yolo_detect(region, self.dot_model, min_conf=0.35)
         return self._merge_dots(dots) if dots else []
 
     def _merge_dots(self, dots, y_thr=30):
@@ -301,6 +306,22 @@ class WechatBotV6:
         return time.time() - self._last_user_click < 1.0
 
     # ---- 聊天操作 ----
+
+    def _verify_red_dot(self, dot):
+        """点击前确认红点仍存在：截取20x20区域检测红色像素"""
+        r = 10
+        try:
+            shot = ImageGrab.grab(bbox=(dot["x"] - r, dot["y"] - r,
+                                        dot["x"] + r, dot["y"] + r))
+            hsv = cv2.cvtColor(np.array(shot), cv2.COLOR_RGB2HSV)
+            lower1, upper1 = np.array([0, 100, 100]), np.array([10, 255, 255])
+            lower2, upper2 = np.array([160, 100, 100]), np.array([180, 255, 255])
+            mask1 = cv2.inRange(hsv, lower1, upper1)
+            mask2 = cv2.inRange(hsv, lower2, upper2)
+            red_pixels = cv2.countNonZero(mask1) + cv2.countNonZero(mask2)
+            return red_pixels > 15  # 至少有15个红色像素
+        except Exception:
+            return True  # 截取失败不阻塞，放行
 
     def click_contact(self, dot, wr):
         """直接点击红点中心"""
@@ -400,12 +421,18 @@ class WechatBotV6:
         masked.convert("RGB").save(buf, format="JPEG", quality=75)
         items = self.ocr.recognize(buf.getvalue())
 
+        name_bottom = region[1] + 40  # 聊天头部区域（联系人名字/系统提示）
         msgs = []
+        n_head = 0
         for text, left, top, w, h in items:
             text_y = region[1] + top
+            if text_y < name_bottom:  # 过滤聊天头部文字，不当作对话消息
+                n_head += 1
+                continue
             msgs.append((text, text_y, False, left, w, h))
 
-
+        if n_head > 0:
+            logger.info(f"  过滤头部: {n_head}条")
         msgs.sort(key=lambda x: x[1])
 
         # 保存调试截图
@@ -677,6 +704,7 @@ class WechatBotV6:
     def process_one_contact(self, dot, wr, idx):
         """黑名单预检 → 冷却 → 进入 → 综合扫描 → 逐条回复 → 尾扫新消息"""
         ck = f"{dot['x']}_{dot['y']}"
+        self._round_replied.clear()  # 每轮清空本轮去重集
 
         # 1. 列表预读名字，黑名单跳过
         name = self.read_name_in_list(wr, dot)
@@ -698,24 +726,24 @@ class WechatBotV6:
             logger.info(f"[{idx}] 鼠标点击，跳过")
             return
 
-        # 4. 点击进入
+        # 4. 点击前确认红点仍在
+        if not self._verify_red_dot(dot):
+            logger.info(f"[{idx}] 红点已消失，跳过")
+            return
+
+        # 5. 点击进入
         self.click_contact(dot, wr)
 
         print(f"  [{idx}] 📨 进入聊天，开始OCR...")
 
         # 5. OCR-1: 当前可见聊天区（遮罩绿色后只读对方消息 + 检测绿色气泡位置）
         page1_msgs, page1_bubbles = self.get_all_messages(wr)
-        if not page1_msgs:
-            print(f"  [{idx}] ⚠ 当前屏无文字，翻页...")
-            logger.info(f"[{idx}] 当前屏无文字（可能为表情包），翻页查看...")
-            self.pageup(1)
-            page1_msgs, page1_bubbles = self.get_all_messages(wr)
 
         if not page1_msgs:
             logger.info(f"[{idx}] 聊天区无文字")
             return
 
-        # 6. PageUp翻一页（最多两屏，不回久远消息）
+        # 6. PageUp翻一页（严格两屏，不回更久远消息）
         self.pageup(1)
         page2_msgs, page2_bubbles = self.get_all_messages(wr)
 
@@ -795,7 +823,10 @@ class WechatBotV6:
             return
 
         print(f"  [{idx}] ✅ 待回复 {len(unanswered)} 条消息")
-        # 9. 从旧到新逐条回复
+        # 9. 从旧到新逐条回复，最多5条
+        if len(unanswered) > 5:
+            logger.info(f"[{idx}] 待回复{len(unanswered)}条，截断至5条")
+            unanswered = unanswered[:5]
         sent_any = False
         for msg_text, _ in unanswered:
             if self.mouse_clicked():
@@ -812,6 +843,12 @@ class WechatBotV6:
                 print(f"  [{idx}] ⏭ 重复消息（{now-last_t:.0f}s前回过）: {msg_text[:30]}")
                 logger.info(f"[{idx}] 重复消息跳过: {msg_text[:30]}")
                 continue
+            # 本轮去重：同一联系人同一条消息不重复回
+            round_key = (ck, key)
+            if round_key in self._round_replied:
+                print(f"  [{idx}] ⏭ 本轮重复: {msg_text[:30]}")
+                logger.info(f"[{idx}] 本轮重复跳过: {msg_text[:30]}")
+                continue
 
             logger.info(f"[{idx}] 回复: {msg_text[:40]}...")
             reply = self.get_ai_reply(msg_text)
@@ -820,13 +857,14 @@ class WechatBotV6:
                 sent_any = True
                 self.last_reply[ck] = now
                 self._recent_replies[key] = now
+                self._round_replied.add(round_key)
                 time.sleep(1.5)
 
-        # 10. 回复后尾扫：捕获对方秒回的新消息（最多5轮）
+        # 10. 回复后尾扫：捕获对方秒回的新消息（最多3轮）
         if sent_any and not self.mouse_clicked():
             seen_texts = {t.strip() for t, _, _, _, _ in all_other}
             seen_texts.update(t.strip() for t, _ in unanswered)
-            for tail_round in range(5):
+            for tail_round in range(3):
                 if self.mouse_clicked():
                     break
                 time.sleep(3.0)
@@ -868,12 +906,17 @@ class WechatBotV6:
                     if now - last_t < 180:
                         print(f"  [{idx}] 尾扫重复跳过: {msg_text[:30]}")
                         continue
+                    round_key = (ck, key)
+                    if round_key in self._round_replied:
+                        print(f"  [{idx}] 尾扫本轮重复: {msg_text[:30]}")
+                        continue
                     logger.info(f"[{idx}] 尾扫回复: {msg_text[:40]}...")
                     reply = self.get_ai_reply(msg_text)
                     if reply:
                         self.send_text(reply)
                         self.last_reply[ck] = now
                         self._recent_replies[key] = now
+                        self._round_replied.add(round_key)
                         time.sleep(1.5)
 
     # ---- 主循环 ----
