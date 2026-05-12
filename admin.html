@@ -306,6 +306,31 @@
 
     <section class="card">
         <h2>
+            不回复关键词
+            <span class="small">消息命中这些关键词则不回复（按顺序匹配，区分精准/模糊）</span>
+        </h2>
+        <div class="flex mt-8" style="gap:8px">
+            <input type="text" id="skipKeyword" placeholder="关键词（如：拍了拍、[图片]、收到）" style="flex:1">
+            <select id="skipMatchType">
+                <option value="contain">包含关键词即可</option>
+                <option value="equal">完全等于</option>
+            </select>
+            <select id="skipActive">
+                <option value="1">启用</option>
+                <option value="0">停用</option>
+            </select>
+            <button class="btn-primary" onclick="addSkipKeyword()">添加</button>
+        </div>
+        <div class="mt-8">
+            <table id="skipTable">
+                <thead><tr><th>关键词</th><th>匹配方式</th><th>状态</th><th>操作</th></tr></thead>
+                <tbody><tr><td colspan="4" class="text-muted">加载中...</td></tr></tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="card">
+        <h2>
             自动回复规则
             <span class="small">按顺序匹配，先命中规则，再fallback 到 AI</span>
         </h2>
@@ -500,7 +525,54 @@
         else toast('保存失败');
     });
 
-    loadSettings(); loadPolicy(); loadRules(); loadMessages();
+    // ---- 不回复关键词 ----
+    const SK = 'api_skip_keywords.php';
+    let skipKeywords = [];
+
+    async function loadSkipKeywords() {
+        let tbody = document.querySelector('#skipTable tbody');
+        try {
+            let r = await fetch(SK + '?action=list'), d = await r.json();
+            if (d.success) { skipKeywords = d.data.keywords || []; renderSkipKeywords(); }
+            else tbody.innerHTML = '<tr><td colspan="4" class="text-muted">加载失败</td></tr>';
+        } catch(e) { tbody.innerHTML = '<tr><td colspan="4" class="text-muted">API 不可用</td></tr>'; }
+    }
+
+    function renderSkipKeywords() {
+        let tbody = document.querySelector('#skipTable tbody');
+        if (!skipKeywords.length) { tbody.innerHTML = '<tr><td colspan="4" class="text-muted">暂无关键词</td></tr>'; return; }
+        tbody.innerHTML = skipKeywords.map((k, i) => `<tr>
+            <td>${k.keyword}</td>
+            <td><span class="tag ${k.match_type === 'equal' ? 'tag-green' : ''}">${k.match_type === 'equal' ? '完全匹配' : '包含'}</span></td>
+            <td><span class="tag ${k.is_active ? 'tag-green' : 'tag-gray'}">${k.is_active ? '启用' : '停用'}</span></td>
+            <td>
+                <button class="btn-ghost" onclick="toggleSkip(${i})">${k.is_active ? '停用' : '启用'}</button>
+                <button class="btn-danger" onclick="deleteSkip(${i})">删除</button>
+            </td></tr>`).join('');
+    }
+
+    async function saveSkipKeywords() {
+        await fetch(SK + '?action=save', { method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({keywords: skipKeywords}) });
+        renderSkipKeywords();
+    }
+
+    function addSkipKeyword() {
+        let kw = document.getElementById('skipKeyword').value.trim();
+        if (!kw) return;
+        skipKeywords.push({
+            keyword: kw,
+            match_type: document.getElementById('skipMatchType').value,
+            is_active: document.getElementById('skipActive').value === '1'
+        });
+        document.getElementById('skipKeyword').value = '';
+        saveSkipKeywords();
+    }
+
+    function toggleSkip(i) { skipKeywords[i].is_active = !skipKeywords[i].is_active; saveSkipKeywords(); }
+    function deleteSkip(i) { skipKeywords.splice(i, 1); saveSkipKeywords(); }
+
+    loadSettings(); loadPolicy(); loadSkipKeywords(); loadRules(); loadMessages();
 </script>
 </body>
 </html>

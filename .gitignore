@@ -33,3 +33,6 @@ Thumbs.db
 
 # 敏感配置（如使用.env）
 .env
+
+# Claude Code
+.claude/
