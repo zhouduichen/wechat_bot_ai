@@ -528,6 +528,12 @@ class WechatBotV6:
         if not t:
             return False
 
+        # ---- 疑似乱码/键盘误触（纯ASCII长串无空格+元音极少）----
+        if re.match(r'^[a-zA-Z0-9\W_]+$', t) and len(t) > 8 and ' ' not in t:
+            vowels = sum(1 for c in t if c in 'aeiouAEIOU')
+            if vowels < len(t) * 0.15:  # 元音占比极低 → 乱码
+                return False
+
         # ---- 必须回复 ----
         if re.search(r'[吗呢吧啊呀]|[?？]|谁|哪|怎么|什么|为啥|为什么|几时|多少|能不能|可不可以', t):
             return True
