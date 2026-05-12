@@ -689,7 +689,7 @@ class WechatBotV6:
 
         # 与上一联系人内容重合 >70% → 同一聊天，固定红点
         if self._last_contact_texts:
-            cur_texts = {t.strip() for t, _, _, _, _ in page1_msgs}
+            cur_texts = {t.strip() for t, _, _, _, _, _ in page1_msgs}
             overlap = len(cur_texts & self._last_contact_texts)
             if overlap > 0 and cur_texts and overlap / len(cur_texts) > 0.7:
                 logger.info(f"[{idx}] 内容重合{overlap}/{len(cur_texts)}→固定红点，跳过")
