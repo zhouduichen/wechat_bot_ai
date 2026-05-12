@@ -4,13 +4,13 @@
 微信自动回复机器人 V7 — OCR三区方向判断 + 逐页红点扫描 + 多条逐条回复
 """
 
-import os, sys, time, json, base64, logging, re
+import ctypes, os, sys, time, json, base64, logging, re
 from datetime import datetime
 from io import BytesIO
 
 import cv2, numpy as np
 import requests, pyperclip, pyautogui
-from PIL import ImageGrab
+from PIL import Image, ImageGrab
 from ultralytics import YOLO
 import uiautomation as auto
 
@@ -38,16 +38,6 @@ SEND_COOLDOWN = 3.0          # 发完消息后冷却
 BETWEEN_CONTACTS_WAIT = 2.0  # 处理完一个联系人后等待
 
 SKIP_KEYWORDS_PATH = os.path.join(BASE_DIR, "skip_keywords.json")
-
-from dataclasses import dataclass
-from typing import List, Any
-
-@dataclass
-class DetectorResult:
-    """统一检测结果接口，预留红点/气泡 AI 兜底用"""
-    items: List[Any]
-    confidence: float
-    source: str  # "primary" | "ai_fallback"
 
 def load_skip_keywords():
     """加载不回复关键词配置"""
@@ -194,9 +184,8 @@ def load_policy():
 
 def should_reply_to(name, policy):
     name = name.strip()
-    if not name:
+    if not name or len(name) < 2:
         return policy.get("default", "skip") != "skip"
-    # 模糊匹配：OCR可能读出不精确的名字
     for blocked in policy.get("never_reply", []):
         b = blocked.strip()
         if not b:
@@ -247,10 +236,6 @@ class WechatBotV6:
         return (wr["l"] + int(wr["w"] * 0.30), wr["t"] + int(wr["h"] * 0.10),
                 wr["r"] - 20, wr["b"] - int(wr["h"] * 0.20))
 
-    def name_region(self, wr):
-        cl, ct, cr, cb = self.chat_region(wr)
-        return (cl, ct, cr, ct + 40)
-
     # ---- YOLO检测 ----
 
     def _yolo_detect(self, region, model, min_conf=0.3):
@@ -298,8 +283,7 @@ class WechatBotV6:
     # ---- 人为操作检测 ----
 
     def mouse_clicked(self):
-        """检测是否有点击行为：当前按下 或 1秒内点击过，则返回True"""
-        import ctypes
+        """检测是否有点击行为：当前按下 或 1秒内点击过"""
         VK_LBUTTON = 0x01
         if ctypes.windll.user32.GetAsyncKeyState(VK_LBUTTON) & 0x8000 != 0:
             self._last_user_click = time.time()
@@ -346,20 +330,14 @@ class WechatBotV6:
         pyautogui.hotkey("ctrl", "v"); time.sleep(0.5)
         pyautogui.press("enter"); time.sleep(SEND_COOLDOWN)
         self._sent_messages.add(text.strip())
+        if len(self._sent_messages) > 500:  # 防止无限增长
+            self._sent_messages = set(list(self._sent_messages)[-300:])
         logger.info(f"已发送: {text[:50]}...")
 
     # ---- 读取消息 ----
 
-    def get_contact_name(self, wr):
-        region = self.name_region(wr)
-        buf = BytesIO(); ImageGrab.grab(bbox=region).save(buf, format="PNG")
-        items = self.ocr.recognize(buf.getvalue())
-        texts = [t for t, *_ in items]
-        return max(texts, key=len) if texts else ""
-
     def _detect_green_bubbles(self, pil_image, region):
-        """检测绿色气泡位置【has_reply用——精准】只认明确的绿色大气泡"""
-        import numpy as np
+        """检测绿色气泡位置"""
         img = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2HSV)
         lower = np.array([48, 40, 40])
         upper = np.array([72, 255, 255])
@@ -375,15 +353,13 @@ class WechatBotV6:
         return sorted(bubbles)
 
     def _mask_green_bubbles(self, pil_image):
-        """遮罩绿色气泡【OCR用——凶猛】宁可多涂，确保自己不出现"""
-        import numpy as np
+        """遮罩绿色气泡，确保OCR不读自己的消息"""
         img = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2HSV)
         lower = np.array([38, 25, 20])
         upper = np.array([85, 255, 255])
         mask = cv2.inRange(img, lower, upper)
         kernel = np.ones((15, 15), np.uint8)
         mask = cv2.dilate(mask, kernel, iterations=4)
-        from PIL import Image
         result = np.array(pil_image.convert("RGB"))
         result[mask > 0] = [255, 255, 255]
         return Image.fromarray(result)
@@ -403,13 +379,11 @@ class WechatBotV6:
         self_bubbles = self._detect_green_bubbles(shot, region)
 
         # 保存绿色气泡标注图
-        import numpy as np
         debug_green = np.array(shot.convert("RGB"))
         for by1, by2 in self_bubbles:
             y1 = by1 - region[1]
             y2 = by2 - region[1]
             cv2.rectangle(debug_green, (0, y1), (debug_green.shape[1] - 1, y2), (0, 255, 0), 2)
-        from PIL import Image
         Image.fromarray(debug_green).save(os.path.join(DEBUG_SHOT_DIR, f"green_{ts}_{len(self_bubbles)}bubbles.png"))
 
         # 遮罩绿色后OCR对方消息
@@ -438,24 +412,6 @@ class WechatBotV6:
         if msgs:
             logger.info(f"  样本: {' | '.join(t[:12] for t, _, _, _, _, _ in msgs[:6])}")
         return msgs, self_bubbles
-
-    @staticmethod
-    def _merge_message_lines(msgs):
-        """合并同一消息的多行文字: [(text, y, left), ...] → [(merged_text, y), ...]"""
-        if not msgs:
-            return []
-        msgs = sorted(msgs, key=lambda x: x[1])
-        merged, group = [], [msgs[0]]
-
-        for i in range(1, len(msgs)):
-            if msgs[i][1] - group[-1][1] < 9 and abs(msgs[i][2] - group[-1][2]) < 5:
-                group.append(msgs[i])
-            else:
-                merged.append((''.join(t for t, _, _ in group), group[0][1]))
-                group = [msgs[i]]
-
-        merged.append((''.join(t for t, _, _ in group), group[0][1]))
-        return merged
 
     # ---- 后端AI ----
 
@@ -632,8 +588,8 @@ class WechatBotV6:
             logger.info(f"  AI判断超时，全跳过")
         except Exception as e:
             logger.info(f"  AI判断失败: {e}")
-        # 失败时保守处理：全跳过
-        return {'reply': [], 'skip': list(range(len(texts)))}
+        # 失败时默认全回复（宁可多回不错过）
+        return {'reply': list(range(len(texts))), 'skip': []}
 
     # ---- 预检：从列表直接读名字 ----
 
@@ -884,7 +840,28 @@ class WechatBotV6:
                     break
                 print(f"  [{idx}] 🔔 尾扫发现 {len(candidates)} 条新消息")
                 candidates.sort(key=lambda x: x[1])
-                for msg_text, _ in candidates:
+                # 尾扫也用意图判断 + AI
+                tail_unanswered = []
+                tail_ambiguous = []
+                for msg_text, y in candidates:
+                    decision = self._should_reply_to_text(msg_text)
+                    if decision is True:
+                        tail_unanswered.append((msg_text, y))
+                    elif decision is None:
+                        tail_ambiguous.append((len(tail_unanswered), msg_text, y))
+                        tail_unanswered.append((msg_text, y))
+                if tail_ambiguous:
+                    ai_texts = [t for _, t, _ in tail_ambiguous]
+                    ai_result = self._ai_should_reply(ai_texts)
+                    ai_skip = set(ai_result.get('skip', []))
+                    filtered = []
+                    for i, (t, y) in enumerate(tail_unanswered):
+                        ambig_idx = next((ai_i for ai_i, (orig_i, _, _) in enumerate(tail_ambiguous) if orig_i == i), None)
+                        if ambig_idx is not None and ambig_idx in ai_skip:
+                            continue
+                        filtered.append((t, y))
+                    tail_unanswered = filtered
+                for msg_text, _ in tail_unanswered:
                     if self.mouse_clicked():
                         break
                     now = time.time()
