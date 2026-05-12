@@ -19,5 +19,15 @@ venv/
 # 模型训练中间产物
 model/wechat_red_dot/
 
+# 快照和数据集
+snapshots/
+dataset_bubble/
+
 # 敏感配置（如 API Key 等 .env 文件）
 .env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
