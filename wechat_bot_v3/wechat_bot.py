@@ -213,6 +213,7 @@ class WechatBotV6:
         self._round_replied = set()  # 本轮已回复: {(ck, text), ...}
         self._sent_messages = set()  # 本次启动已发送: {text, ...}
         self._sticky_dots = set()  # 固定红点位置（点击无效）: {(x, y), ...}
+        self._last_contact_texts = set()  # 上一个联系人的OCR文本快照
         self.ocr = BaiduOCR(BAIDU_API_KEY, BAIDU_SECRET_KEY)
         self.policy = load_policy()
         self.skip_keywords = load_skip_keywords().get("keywords", [])
@@ -686,6 +687,15 @@ class WechatBotV6:
             self._sticky_dots.add(dot_key)
             return False
 
+        # 与上一联系人内容重合 >70% → 同一聊天，固定红点
+        if self._last_contact_texts:
+            cur_texts = {t.strip() for t, _, _, _, _ in page1_msgs}
+            overlap = len(cur_texts & self._last_contact_texts)
+            if overlap > 0 and cur_texts and overlap / len(cur_texts) > 0.7:
+                logger.info(f"[{idx}] 内容重合{overlap}/{len(cur_texts)}→固定红点，跳过")
+                self._sticky_dots.add(dot_key)
+                return False
+
         # 6. PageUp翻第二屏（补翻过则跳过，避免翻到更久远消息）
         page2_msgs, page2_bubbles = [], []
         if not retried:
@@ -700,6 +710,9 @@ class WechatBotV6:
         for page in pages_msgs:
             for t, y, _, l, w, h in page:
                 all_other.append((t, y, l, w, h))
+
+        # 收集当前屏所有文本快照
+        seen_texts = {t.strip() for t, _, _, _, _ in all_other}
 
         # 先逐条 should_skip 过滤
         raw_unanswered = []
@@ -826,7 +839,6 @@ class WechatBotV6:
 
         # 10. 回复后尾扫：捕获对方秒回的新消息（最多3轮）
         if sent_any and not self.mouse_clicked():
-            seen_texts = {t.strip() for t, _, _, _, _ in all_other}
             seen_texts.update(t.strip() for t, _ in unanswered)
             for tail_round in range(3):
                 if self.mouse_clicked():
@@ -903,6 +915,9 @@ class WechatBotV6:
                         self._recent_replies[key] = now
                         self._round_replied.add(round_key)
                         time.sleep(1.5)
+
+        # 保存当前聊天文本快照，用于下轮检测固定红点
+        self._last_contact_texts = seen_texts.copy()
 
         # 确保焦点回到联系人列表，防止下次点击偏移
         wr2 = self.get_wr()
