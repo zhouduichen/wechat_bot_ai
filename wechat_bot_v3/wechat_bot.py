@@ -544,6 +544,12 @@ class WechatBotV6:
         if re.search(r'[我你]', t) and re.search(r'[了想过要会能可以去来给说看吃买用找问告诉帮让发到在]', t):
             return True
 
+        # ---- 疑似纯人名（纯CJK 2~4字，无消息特征词）----
+        if 2 <= len(t) <= 4 and re.match(r'^[一-鿿]+$', t):
+            msg_chars = r'[吗呢吧啊呀?？谁哪怎啥多少你我他了过想要会能去来到有没不就好还也都太真给说看知可]'
+            if not re.search(msg_chars, t):
+                return False
+
         # ---- 必须跳过 ----
         if len(t) < 2:
             return False
@@ -594,8 +600,8 @@ class WechatBotV6:
             logger.info(f"  AI判断超时，全跳过")
         except Exception as e:
             logger.info(f"  AI判断失败: {e}")
-        # 失败时默认全回复（宁可多回不错过）
-        return {'reply': list(range(len(texts))), 'skip': []}
+        # 失败时保守处理：全跳过
+        return {'reply': [], 'skip': list(range(len(texts)))}
 
     # ---- 预检：从列表直接读名字 ----
 
