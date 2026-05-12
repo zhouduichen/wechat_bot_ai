@@ -435,12 +435,14 @@ class WechatBotV6:
                         items = items2
                         logger.info(f"  重试后乱码降至{n2}条")
 
-        name_bottom = region[1] + 40  # 聊天头部区域（联系人名字/系统提示）
+        # 聊天头部区域过滤：仅在OCR返回有效位置数据时启用
+        has_position = any(top > 0 for _, _, top, _, _ in items)
+        name_bottom = region[1] + 40
         msgs = []
         n_head = 0
         for text, left, top, w, h in items:
             text_y = region[1] + top
-            if text_y < name_bottom:  # 过滤聊天头部文字，不当作对话消息
+            if has_position and text_y < name_bottom:
                 n_head += 1
                 continue
             msgs.append((text, text_y, False, left, w, h))
