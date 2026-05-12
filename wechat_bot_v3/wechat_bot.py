@@ -222,6 +222,7 @@ class WechatBotV6:
         self._last_user_click = 0
         self._recent_replies = {}  # 防重复回复: {text: timestamp}（跨轮）
         self._round_replied = set()  # 本轮已回复: {(ck, text), ...}
+        self._sent_messages = set()  # 本次启动已发送: {text, ...}
         self.ocr = BaiduOCR(BAIDU_API_KEY, BAIDU_SECRET_KEY)
         self.policy = load_policy()
         self.skip_keywords = load_skip_keywords().get("keywords", [])
@@ -344,6 +345,7 @@ class WechatBotV6:
         pyperclip.copy(text); time.sleep(0.15)
         pyautogui.hotkey("ctrl", "v"); time.sleep(0.5)
         pyautogui.press("enter"); time.sleep(SEND_COOLDOWN)
+        self._sent_messages.add(text.strip())
         logger.info(f"已发送: {text[:50]}...")
 
     # ---- 读取消息 ----
@@ -421,34 +423,10 @@ class WechatBotV6:
         masked.convert("RGB").save(buf, format="JPEG", quality=75)
         items = self.ocr.recognize(buf.getvalue())
 
-        # OCR质量检查：乱码>30%则用更高质JPEG重试一次
-        if items:
-            n_garbled = sum(1 for t, *_ in items if self._text_garbled(t))
-            if n_garbled / len(items) > 0.3:
-                logger.info(f"  OCR质量差（乱码{n_garbled}/{len(items)}），重试高质OCR...")
-                buf2 = BytesIO()
-                masked.convert("RGB").save(buf2, format="JPEG", quality=95)
-                items2 = self.ocr.recognize(buf2.getvalue())
-                if items2:
-                    n2 = sum(1 for t, *_ in items2 if self._text_garbled(t))
-                    if n2 < n_garbled:
-                        items = items2
-                        logger.info(f"  重试后乱码降至{n2}条")
-
-        # 聊天头部区域过滤：仅在OCR返回有效位置数据时启用
-        has_position = any(top > 0 for _, _, top, _, _ in items)
-        name_bottom = region[1] + 40
         msgs = []
-        n_head = 0
         for text, left, top, w, h in items:
             text_y = region[1] + top
-            if has_position and text_y < name_bottom:
-                n_head += 1
-                continue
             msgs.append((text, text_y, False, left, w, h))
-
-        if n_head > 0:
-            logger.info(f"  过滤头部: {n_head}条")
         msgs.sort(key=lambda x: x[1])
 
         # 保存调试截图
@@ -588,130 +566,74 @@ class WechatBotV6:
     def should_skip(self, text):
         return self._skip_reason(text) is not None
 
-    def _ai_fallback_detect_nicknames(self, items):
-        """AI兜底识别群聊昵称。失败返回空set，调用方降级用聚类结果。
-        items: [(text, y, left, w, h), ...]
-        """
-        prompt_parts = []
-        for i, (text, y, left, w, h) in enumerate(items):
-            prompt_parts.append(f"[{i}]{text}(y={y})")
+    def _should_reply_to_text(self, text):
+        """判断消息是否值得回复。True=回复, False=跳过, None=不确定(AI判定)"""
+        t = text.strip()
+        if not t:
+            return False
+
+        # ---- 必须回复 ----
+        if re.search(r'[吗呢吧啊呀]|[?？]|谁|哪|怎么|什么|为啥|为什么|几时|多少|能不能|可不可以', t):
+            return True
+        if '@' in t:
+            return True
+        if len(t) > 8:
+            return True
+        if re.search(r'[我你]', t) and re.search(r'[了想过要会能可以去来给说看吃买用找问告诉帮让发到在]', t):
+            return True
+
+        # ---- 必须跳过 ----
+        if len(t) < 2:
+            return False
+        if t in ('好的', 'OK', 'ok', '嗯', '知道了', '行', '收到', '好', '对', '是的',
+                 '没错', '明白', '懂了', '谢谢', '不客气', '没事', '好吧', 'okk', '哦'):
+            return False
+        if re.match(r'^[哈嘿呵嘻啊嗯哦噢]{2,}$', t):
+            return False
+        if t in self._sent_messages:
+            return False
+
+        # ---- 不确定 → AI ----
+        return None
+
+    def _ai_should_reply(self, texts):
+        """批量AI判断边界消息是否需要回复。返回 {'reply': [idx], 'skip': [idx]}"""
+        if not texts:
+            return {'reply': [], 'skip': []}
+        prompt_parts = [f"[{i}]{t}" for i, t in enumerate(texts)]
         prompt = "\n".join(prompt_parts)
-
-        system_prompt = (
-            "你是微信聊天OCR分析助手。"
-            "以下是一个群聊窗口OCR识别的文字列表，每项格式为[序号]文字(y=纵向坐标)。"
-            "群成员昵称是显示在消息上方的小号彩色文字，通常很短（≤15字），位于消息正文的正上方。"
-            "请找出所有群成员昵称，返回JSON：{\"names\": [\"昵称1\", \"昵称2\"]}。"
-            "不要返回其他内容。"
-        )
-
         try:
             url = f"{DEEPSEEK_API_BASE}/chat/completions"
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {DEEPSEEK_API_KEY}"
-            }
+            headers = {"Content-Type": "application/json",
+                       "Authorization": f"Bearer {DEEPSEEK_API_KEY}"}
             payload = {
                 "model": DEEPSEEK_MODEL,
                 "messages": [
-                    {"role": "system", "content": system_prompt},
+                    {"role": "system", "content":
+                     "判断以下微信消息是否需要回复。返回JSON: {\"reply\":[序号],\"skip\":[序号]}"},
                     {"role": "user", "content": prompt}
                 ],
-                "temperature": 0.1,
-                "max_tokens": 100,
+                "temperature": 0.1, "max_tokens": 100,
             }
             r = requests.post(url, headers=headers, json=payload, timeout=3)
             if r.status_code == 200:
-                d = r.json()
-                content = d.get("choices", [{}])[0].get("message", {}).get("content", "")
-                # 提取JSON（兼容非JSON模式）
+                content = r.json().get("choices", [{}])[0].get("message", {}).get("content", "")
                 content = content.strip()
                 if content.startswith("```"):
                     content = content.split("\n", 1)[1].rsplit("\n", 1)[0]
                 data = json.loads(content)
-                names = data.get("names", [])
-                if isinstance(names, list):
-                    logger.info(f"AI昵称兜底识别: {names}")
-                    return set(n.strip() for n in names if n.strip())
+                reply_ids = data.get('reply', [])
+                skip_ids = data.get('skip', [])
+                logger.info(f"  AI判断: 回复{reply_ids} 跳过{skip_ids} (共{len(texts)}条)")
+                return {'reply': reply_ids, 'skip': skip_ids}
+            else:
+                logger.warning(f"  AI判断HTTP错误: {r.status_code}")
+        except requests.Timeout:
+            logger.info(f"  AI判断超时，全跳过")
         except Exception as e:
-            logger.info(f"AI昵称兜底失败，降级用聚类结果: {e}")
-
-        return set()
-
-    @staticmethod
-    def _looks_like_nickname(text):
-        """判断是否像真人昵称（过滤OCR乱码）"""
-        t = text.strip()
-        if len(t) < 2:
-            return False
-        cjk = sum(1 for c in t if '一' <= c <= '鿿')
-        alpha = sum(1 for c in t if c.isascii() and c.isalpha())
-        garbage = len(t) - cjk - alpha
-        return garbage <= len(t) * 0.3
-
-    @staticmethod
-    def _text_garbled(text):
-        """判断单个OCR文字是否乱码"""
-        t = text.strip()
-        if not t or len(t) < 2:
-            return True
-        cjk = sum(1 for c in t if '一' <= c <= '鿿')
-        latin = sum(1 for c in t if c.isascii() and c.isalpha())
-        digits = sum(1 for c in t if c.isdigit())
-        good = cjk + latin + digits
-        return good < len(t) * 0.6
-
-    def filter_group_nicknames(self, items):
-        """序列模式 + 群聊昵称过滤。必要时AI兜底。
-        items: [(text, y, left, w, h), ...]  — 已按OCR阅读顺序（上→下）
-        返回: [(text, y), ...] 过滤昵称后的消息
-        """
-        if not items:
-            return []
-
-        logger.info(f"  [昵称过滤] 输入{len(items)}条")
-
-        # 1. 序列模式检测：短→长 过渡 = 昵称→消息
-        #    百度OCR按阅读顺序返回，群聊中"昵称在上、消息在下"体现为序列中"短→长"跳跃
-        nicknames = set()
-        texts = [t.strip() for t, _, _, _, _ in items]
-
-        for i in range(len(texts) - 1):
-            curr, nxt = texts[i], texts[i + 1]
-            if not curr or not nxt:
-                continue
-            # 当前短 + 下一条明显更长 → 当前是昵称
-            if len(curr) <= 15 and len(nxt) >= len(curr) * 1.5 and self._looks_like_nickname(curr):
-                nicknames.add(curr)
-
-        # 2. 群聊判定
-        is_group = len(nicknames) >= 2
-
-        if not is_group:
-            logger.info(f"  判定为单聊，跳过昵称过滤")
-            return [(t, y) for t, y, _, _, _ in items]
-
-        logger.info(f"  判定为群聊（序列模式），昵称候选: {nicknames}")
-
-        # 3. AI兜底：用DeepSeek验证并补充昵称
-        ai_names = self._ai_fallback_detect_nicknames(items)
-        for name in ai_names:
-            if len(name.strip()) <= 15 and self._looks_like_nickname(name):
-                nicknames.add(name.strip())
-        if ai_names:
-            logger.info(f"  AI补充/确认昵称: {ai_names}")
-
-        # 4. 过滤
-        n_filtered = 0
-        result = []
-        for text, y, left, w, h in items:
-            if text.strip() in nicknames:
-                n_filtered += 1
-                continue
-            result.append((text, y))
-
-        logger.info(f"  过滤群名: {n_filtered}条, 保留{len(result)}条消息")
-        return result
+            logger.info(f"  AI判断失败: {e}")
+        # 失败时保守处理：全跳过
+        return {'reply': [], 'skip': list(range(len(texts)))}
 
     # ---- 预检：从列表直接读名字 ----
 
@@ -803,13 +725,10 @@ class WechatBotV6:
             for t, y, _, l, w, h in page:
                 all_other.append((t, y, l, w, h))
 
-        # 7.5 过滤群聊昵称
-        filtered_other = self.filter_group_nicknames(all_other)
-
         # 先逐条 should_skip 过滤
         raw_unanswered = []
         n_skipped = 0
-        for text, y in filtered_other:
+        for text, y, l, w, h in all_other:
             skip_reason = self._skip_reason(text)
             if skip_reason:
                 n_skipped += 1
@@ -837,29 +756,51 @@ class WechatBotV6:
         for t, y in candidates:
             print(f"      ── [{t[:50]}]")
 
-        # 8. 逐条判断是否已回复——用绿色气泡位置
+        # 8. 逐条判断是否值得回复
+        has_self_bubbles = len(all_self_bubbles) > 0
         all_unanswered = []
+        ambiguous = []  # [(idx, text, y), ...] 边界消息
         n_has_reply = 0
 
         for text, y in candidates:
-            # 找正下方有没有绿色气泡（自己回复）——标准从严，距离<80px且气泡够大才算
-            has_green_below = False
-            nearest_dist = None
-            for by1, by2 in all_self_bubbles:
-                if by1 > y and by1 - y < 150:
-                    has_green_below = True
-                    nearest_dist = f"{by1 - y:.0f}px"
-                    break
-
-            if has_green_below:
+            # 绿泡存在 + 文本匹配已发消息 → 已回复
+            if has_self_bubbles and text.strip() in self._sent_messages:
                 n_has_reply += 1
-                print(f"  [{idx}] ✅ 已回复 [{text[:30]}] → 下方绿色气泡({nearest_dist})")
+                print(f"  [{idx}] ✅ 已回复 [{text[:30]}]")
                 continue
 
-            print(f"  [{idx}] 🔔 待回复 [{text[:30]}]")
-            all_unanswered.append((text, y))
+            # 消息意图判断
+            decision = self._should_reply_to_text(text)
+            if decision is True:
+                print(f"  [{idx}] 🔔 待回复 [{text[:30]}]")
+                all_unanswered.append((text, y))
+            elif decision is False:
+                n_has_reply += 1
+                print(f"  [{idx}] ⏭ 跳过 [{text[:30]}]（无意图）")
+            else:
+                ambiguous.append((len(all_unanswered), text, y))
+                all_unanswered.append((text, y))  # 暂存，AI后再定
 
-        logger.info(f"[{idx}] 筛选: should_skip过滤{n_skipped}条 已回复{n_has_reply}条 → 待回复{len(all_unanswered)}条")
+        # AI批量判断边界消息
+        if ambiguous:
+            ai_texts = [t for _, t, _ in ambiguous]
+            ai_result = self._ai_should_reply(ai_texts)
+            ai_skip_idx = set(ai_result.get('skip', []))
+            # 从all_unanswered中移除AI判跳过的
+            filtered = []
+            ai_skip_n = 0
+            for i, (text, y) in enumerate(all_unanswered):
+                ambig_idx = next((ai_i for ai_i, (orig_i, _, _) in enumerate(ambiguous) if orig_i == i), None)
+                if ambig_idx is not None and ambig_idx in ai_skip_idx:
+                    ai_skip_n += 1
+                    print(f"  [{idx}] ⏭ AI跳过 [{text[:30]}]")
+                    continue
+                filtered.append((text, y))
+            if ai_skip_n > 0:
+                logger.info(f"[{idx}] AI跳过{ai_skip_n}条边界消息")
+            all_unanswered = filtered
+
+        logger.info(f"[{idx}] 筛选: should_skip过滤{n_skipped}条 已回复/跳过{n_has_reply}条 → 待回复{len(all_unanswered)}条")
 
         unanswered = all_unanswered
         unanswered.sort(key=lambda x: x[1] if x[1] else 0)
