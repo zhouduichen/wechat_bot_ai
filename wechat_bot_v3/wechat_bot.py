@@ -212,6 +212,7 @@ class WechatBotV6:
         self._recent_replies = {}  # 防重复回复: {text: timestamp}（跨轮）
         self._round_replied = set()  # 本轮已回复: {(ck, text), ...}
         self._sent_messages = set()  # 本次启动已发送: {text, ...}
+        self._sticky_dots = set()  # 固定红点位置（点击无效）: {(x, y), ...}
         self.ocr = BaiduOCR(BAIDU_API_KEY, BAIDU_SECRET_KEY)
         self.policy = load_policy()
         self.skip_keywords = load_skip_keywords().get("keywords", [])
@@ -655,6 +656,12 @@ class WechatBotV6:
             logger.info(f"[{idx}] 鼠标点击，跳过")
             return False
 
+        # 3.5 已知固定无效红点，跳过
+        dot_key = (dot["x"] // 20, dot["y"] // 20)  # 20px粒度去重
+        if dot_key in self._sticky_dots:
+            logger.info(f"[{idx}] 固定红点，跳过")
+            return False
+
         # 4. 点击前确认红点仍在
         if not self._verify_red_dot(dot):
             logger.info(f"[{idx}] 红点已消失，跳过")
@@ -676,6 +683,7 @@ class WechatBotV6:
 
         if not page1_msgs:
             logger.info(f"[{idx}] 聊天区无文字")
+            self._sticky_dots.add(dot_key)
             return False
 
         # 6. PageUp翻第二屏（补翻过则跳过，避免翻到更久远消息）
