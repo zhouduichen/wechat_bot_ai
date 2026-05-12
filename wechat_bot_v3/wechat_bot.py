@@ -34,7 +34,7 @@ DEEPSEEK_API_BASE = "https://api.deepseek.com"
 DEEPSEEK_MODEL = "deepseek-chat"
 LOOP_INTERVAL = 3
 CHAT_LOAD_WAIT = 3.0        # 点击联系人后等待加载
-SEND_COOLDOWN = 2.0          # 发完消息后冷却
+SEND_COOLDOWN = 3.0          # 发完消息后冷却
 BETWEEN_CONTACTS_WAIT = 2.0  # 处理完一个联系人后等待
 
 SKIP_KEYWORDS_PATH = os.path.join(BASE_DIR, "skip_keywords.json")
@@ -342,7 +342,7 @@ class WechatBotV6:
         pyautogui.hotkey("ctrl", "a"); time.sleep(0.05)
         pyautogui.press("delete"); time.sleep(0.05)
         pyperclip.copy(text); time.sleep(0.15)
-        pyautogui.hotkey("ctrl", "v"); time.sleep(0.3)
+        pyautogui.hotkey("ctrl", "v"); time.sleep(0.5)
         pyautogui.press("enter"); time.sleep(SEND_COOLDOWN)
         logger.info(f"已发送: {text[:50]}...")
 
@@ -420,6 +420,20 @@ class WechatBotV6:
         buf = BytesIO()
         masked.convert("RGB").save(buf, format="JPEG", quality=75)
         items = self.ocr.recognize(buf.getvalue())
+
+        # OCR质量检查：乱码>30%则用更高质JPEG重试一次
+        if items:
+            n_garbled = sum(1 for t, *_ in items if self._text_garbled(t))
+            if n_garbled / len(items) > 0.3:
+                logger.info(f"  OCR质量差（乱码{n_garbled}/{len(items)}），重试高质OCR...")
+                buf2 = BytesIO()
+                masked.convert("RGB").save(buf2, format="JPEG", quality=95)
+                items2 = self.ocr.recognize(buf2.getvalue())
+                if items2:
+                    n2 = sum(1 for t, *_ in items2 if self._text_garbled(t))
+                    if n2 < n_garbled:
+                        items = items2
+                        logger.info(f"  重试后乱码降至{n2}条")
 
         name_bottom = region[1] + 40  # 聊天头部区域（联系人名字/系统提示）
         msgs = []
@@ -622,6 +636,29 @@ class WechatBotV6:
 
         return set()
 
+    @staticmethod
+    def _looks_like_nickname(text):
+        """判断是否像真人昵称（过滤OCR乱码）"""
+        t = text.strip()
+        if len(t) < 2:
+            return False
+        cjk = sum(1 for c in t if '一' <= c <= '鿿')
+        alpha = sum(1 for c in t if c.isalpha())
+        garbage = len(t) - cjk - alpha
+        return garbage <= len(t) * 0.3
+
+    @staticmethod
+    def _text_garbled(text):
+        """判断单个OCR文字是否乱码"""
+        t = text.strip()
+        if not t or len(t) < 2:
+            return True
+        cjk = sum(1 for c in t if '一' <= c <= '鿿')
+        latin = sum(1 for c in t if c.isascii() and c.isalpha())
+        digits = sum(1 for c in t if c.isdigit())
+        good = cjk + latin + digits
+        return good < len(t) * 0.6
+
     def filter_group_nicknames(self, items):
         """序列模式 + 群聊昵称过滤。必要时AI兜底。
         items: [(text, y, left, w, h), ...]  — 已按OCR阅读顺序（上→下）
@@ -642,7 +679,7 @@ class WechatBotV6:
             if not curr or not nxt:
                 continue
             # 当前短 + 下一条明显更长 → 当前是昵称
-            if len(curr) <= 15 and len(nxt) >= len(curr) * 1.5:
+            if len(curr) <= 15 and len(nxt) >= len(curr) * 1.5 and self._looks_like_nickname(curr):
                 nicknames.add(curr)
 
         # 2. 群聊判定
@@ -657,7 +694,7 @@ class WechatBotV6:
         # 3. AI兜底：用DeepSeek验证并补充昵称
         ai_names = self._ai_fallback_detect_nicknames(items)
         for name in ai_names:
-            if len(name.strip()) <= 15:
+            if len(name.strip()) <= 15 and self._looks_like_nickname(name):
                 nicknames.add(name.strip())
         if ai_names:
             logger.info(f"  AI补充/确认昵称: {ai_names}")
@@ -918,6 +955,12 @@ class WechatBotV6:
                         self._recent_replies[key] = now
                         self._round_replied.add(round_key)
                         time.sleep(1.5)
+
+        # 确保焦点回到联系人列表，防止下次点击偏移
+        wr2 = self.get_wr()
+        cr = self.contact_region(wr2)
+        pyautogui.click(cr[0] + (cr[2] - cr[0]) // 2, cr[1] + 50)
+        time.sleep(0.5)
 
         return sent_any
 
